@@ -1,0 +1,8 @@
+boto3
+scikit-learn
+xgboost
+pandas
+numpy
+scipy
+joblib
+requests
