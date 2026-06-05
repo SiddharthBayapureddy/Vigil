@@ -8,4 +8,6 @@ dependencies = [
     "awscli>=1.45.19",
     "boto3>=1.43.19",
     "pandas>=3.0.3",
+    "scikit-learn>=1.9.0",
+    "xgboost>=3.2.0",
 ]
