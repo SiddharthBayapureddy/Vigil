@@ -1,3 +1,5 @@
+# Trains a local instance of an XGBRegressor on the NASA CMAPSS dataset and uploads the model_weights, params, stats to S3
+
 import xgboost as xgb
 import pandas as pd
 import numpy as np
@@ -72,7 +74,7 @@ def train(X_train : pd.DataFrame , y_train : pd.DataFrame , X_val : pd.DataFrame
 
 def evaluate(model : xgb.XGBRegressor, X_val : pd.DataFrame , y_val: pd.DataFrame) -> dict:
     
-    print("Evaluating the model: ")
+    print("Evaluating the model: ") 
 
     y_pred  = model.predict(X_val)
     mae     = float(np.mean(np.abs(y_val - y_pred)))
