@@ -7,6 +7,9 @@ import pandas as pd
 from scipy.stats import ks_2samp
 import xgboost as xgb
 
+# Added import for the feature pipeline
+from features import build_features, load_scaler
+
 BUCKET = "vigil-bucket"
 INCOMING_KEY = "raw-data/incoming/test.csv"
 INCOMING_FILE = "test.csv"
@@ -39,8 +42,16 @@ def compute_psi(ref_counts , incoming_vals , bins) -> float:
     '''Calculate PSI from reference_stats and the incoming values and outputs it'''
 
     ref_counts = np.array(ref_counts,dtype=float)
+    
+    # Filter out NaNs before histogram
+    incoming_vals = incoming_vals[~np.isnan(incoming_vals)]
+    
     incoming_cnts , _ = np.histogram(incoming_vals , bins = bins)
     incoming_cnts = incoming_cnts.astype(float)
+
+    # Safeguard against empty bins / divide by zero
+    if incoming_cnts.sum() == 0:
+        return 999.0  # Returns a massive PSI indicating complete data drift
 
     ref_pct = ref_counts/ref_counts.sum()
     incoming_pct = incoming_cnts/incoming_cnts.sum()
@@ -136,12 +147,21 @@ def run_drift_checks(model : xgb.XGBRegressor , reference_stats : dict , incomin
     }
  
 
-
 if __name__ == "__main__":
 
     s3 = boto3.client("s3")
-    incoming_val,ref_stats, model= download_stats(s3)
-    results = run_drift_checks(model, ref_stats, incoming_val)
+    incoming_val_raw, ref_stats, model = download_stats(s3)
+
+    # Apply feature engineering to raw incoming data
+    scaler = load_scaler(s3)
+    incoming_X, incoming_y, _ = build_features(incoming_val_raw, scaler=scaler, fit=False)
+    
+    # Recombine to match the expected DataFrame format in run_drift_checks
+    incoming_val_processed = incoming_X.copy()
+    if incoming_y is not None:
+        incoming_val_processed[TARGET] = incoming_y
+
+    results = run_drift_checks(model, ref_stats, incoming_val_processed)
 
     print("\n── Drift Report ──────────────────────────────")
     print(f"Drift Detected : {results['drift_detected']}")
@@ -164,5 +184,3 @@ if __name__ == "__main__":
     for file in [MODEL_FILE,STATS_FILE, INCOMING_FILE]:
         if(os.path.exists(file)):
             os.remove(file)
-        
-    

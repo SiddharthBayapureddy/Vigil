@@ -5,8 +5,11 @@ import pandas as pd
 import numpy as np
 import json
 import os
+from datetime import datetime, timezone
 
 import boto3
+
+from features import build_features
 
 s3 = boto3.client("s3")
 
@@ -32,29 +35,50 @@ def download(s3 : boto3.client) -> None:
 
     return None
 
-def load():
+def load(s3 : boto3.client):
     print("Loading and processing datasets")
     
     train_df = pd.read_csv(TRAIN_FILE)
-    val_df   = pd.read_csv(VAL_FILE)
+    train_df["RUL"] = train_df["RUL"].clip(upper=125)
 
-    X_train = train_df.drop(columns=DROP_COLS)
-    y_train = train_df[TARGET]
-    X_val   = val_df.drop(columns=DROP_COLS)
-    y_val   = val_df[TARGET]
+    val_df   = pd.read_csv(VAL_FILE)
+    val_df["RUL"] = val_df["RUL"].clip(upper=125)
+
+    X_train, y_train, scaler = build_features(train_df, fit=True, s3=s3)
+    X_val,   y_val,   _      = build_features(val_df,   scaler=scaler)
 
     print(f"      Train: {X_train.shape} | Val: {X_val.shape}")
     return X_train, y_train, X_val, y_val
 
+
+def nasa_custom_objective(y_true, y_pred):
+    """
+    Custom asymmetric objective function matching the NASA evaluation metric.
+    Heavily penalizes over-estimation (predicting an engine is safe when it is about to fail).
+    Returns gradient and hessian for XGBoost.
+    """
+    diff = y_pred - y_true
+    
+    # Gradients (first derivative)
+    grad = np.where(diff < 0, 
+                    (-1.0 / 13.0) * np.exp(-diff / 13.0), 
+                    (1.0 / 10.0) * np.exp(diff / 10.0))
+    
+    # Hessians (second derivative)
+    hess = np.where(diff < 0, 
+                    (1.0 / 169.0) * np.exp(-diff / 13.0), 
+                    (1.0 / 100.0) * np.exp(diff / 10.0))
+    
+    return grad, hess
 
 
 # Training on XGBoost
 def train(X_train : pd.DataFrame , y_train : pd.DataFrame , X_val : pd.DataFrame , y_val : pd.DataFrame) -> xgb.XGBRegressor:
 
     model = xgb.XGBRegressor(
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=4,
+        n_estimators=500,
+        learning_rate=0.03,
+        max_depth=6,
         min_child_weight=1,
         subsample=0.8,
         colsample_bytree=0.8,
@@ -63,7 +87,8 @@ def train(X_train : pd.DataFrame , y_train : pd.DataFrame , X_val : pd.DataFrame
         random_state=67,
         tree_method="hist",
         n_jobs=-1,
-        early_stopping_rounds = 20
+        early_stopping_rounds=20,
+        objective=nasa_custom_objective # Applied the asymmetric objective
     )
     model.fit(
         X_train, y_train,
@@ -71,6 +96,14 @@ def train(X_train : pd.DataFrame , y_train : pd.DataFrame , X_val : pd.DataFrame
         verbose=50
     )
     return model
+
+
+def nasa_score(y_true, y_pred):
+    diff = y_pred - y_true
+    score = np.where(diff < 0,
+                     np.exp(-diff / 13) - 1,
+                     np.exp(diff  / 10) - 1)
+    return float(np.sum(score))
 
 def evaluate(model : xgb.XGBRegressor, X_val : pd.DataFrame , y_val: pd.DataFrame) -> dict:
     
@@ -83,10 +116,12 @@ def evaluate(model : xgb.XGBRegressor, X_val : pd.DataFrame , y_val: pd.DataFram
     ss_res  = float(np.sum((y_val - y_pred) ** 2))
     ss_tot  = float(np.sum((y_val - np.mean(y_val)) ** 2))
     r2      = float(1 - ss_res / ss_tot)
+    nasa = nasa_score(y_val,y_pred)
 
     print(f"      MAE  : {mae:.4f}")
     print(f"      RMSE : {rmse:.4f}")
     print(f"      R²   : {r2:.4f}")
+    print(f"      NASA : {nasa:.4f}")
 
     # Per-feature distribution stats 
     feature_stats = {}
@@ -107,14 +142,19 @@ def evaluate(model : xgb.XGBRegressor, X_val : pd.DataFrame , y_val: pd.DataFram
             "hist_counts": counts.tolist(),
         }
 
+    importance = dict(zip(X_val.columns, model.feature_importances_))
+    top_10 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:10]
+
     # Prediction distribution — for MAE degradation check
     reference_stats = {
         "baseline_mae":  mae,
         "baseline_rmse": rmse,
         "baseline_r2":   r2,
+        "baseline_nasa": nasa,
         "n_val_samples": len(y_val),
         "feature_names": X_val.columns.tolist(),
         "features":      feature_stats,
+        "top_features":  {k: round(float(v), 6) for k, v in top_10},
         "prediction_distribution": {
             "mean": float(np.mean(y_pred)),
             "std":  float(np.std(y_pred)),
@@ -128,13 +168,23 @@ def evaluate(model : xgb.XGBRegressor, X_val : pd.DataFrame , y_val: pd.DataFram
     return reference_stats
     
 
-
 def save_and_upload(s3 : boto3.client , model : xgb.XGBRegressor , stats : dict) -> None:
 
     print("Uploading model weights..")
     model.save_model(MODEL_FILE)
     with open("reference_stats.json" , "w") as file:
         json.dump(stats,file , indent=2)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    try:
+        s3.copy_object(
+            Bucket=BUCKET,
+            CopySource={"Bucket": BUCKET, "Key": MODEL_S3_KEY},
+            Key=f"models/archive/model_{timestamp}.json"
+        )
+        print(f"      Archived → s3://{BUCKET}/models/archive/model_{timestamp}.json")
+    except Exception:
+        pass  # First run, nothing to archive yet
 
     s3.upload_file(MODEL_FILE, BUCKET, MODEL_S3_KEY)
     s3.upload_file("reference_stats.json" , BUCKET , STATS_S3_KEY)
@@ -154,7 +204,7 @@ def save_and_upload(s3 : boto3.client , model : xgb.XGBRegressor , stats : dict)
 if __name__ == "__main__":
 
     download(s3)
-    X_train, y_train, X_val, y_val = load()
+    X_train, y_train, X_val, y_val = load(s3)
     model  = train(X_train, y_train, X_val, y_val)
     stats  = evaluate(model, X_val, y_val)
     save_and_upload(s3, model, stats)
@@ -165,4 +215,4 @@ if __name__ == "__main__":
     print(f"Baseline MAE : {stats['baseline_mae']:.4f}")
     print(f"Baseline RMSE: {stats['baseline_rmse']:.4f}")
     print(f"Baseline R²  : {stats['baseline_r2']:.4f}")
-
+    print(f"NASA Score   : {stats['baseline_nasa']:.4f}")
