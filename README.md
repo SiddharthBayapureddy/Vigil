@@ -4,9 +4,9 @@ Autonomous ML pipeline with drift detection & auto-retraining on AWS.
 ## Progress
 - [x] S3 bucket + folder structure
 - [x] IAM roles (Lambda, SageMaker, Step Functions)
-- [ ] SNS alerts
-- [ ] ECR repository
-- [ ] Data pipeline + baseline model
+- [x] SNS alerts
+- [x] ECR repository
+- [x] Data pipeline + baseline model
 - [ ] Lambda functions (inference, monitoring, validation, promotion)
 - [ ] CloudWatch metrics + alarms
 - [ ] Step Functions retraining pipeline
