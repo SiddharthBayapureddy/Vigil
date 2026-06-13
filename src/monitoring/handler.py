@@ -6,6 +6,8 @@ import json
 import sys
 import os
 import boto3
+import io
+import pickle
 
 import pandas as pd
 import xgboost as xgb
@@ -20,6 +22,7 @@ INCOMING_KEY     = "raw-data/incoming/test.csv"
 INCOMING_FILE    = "/tmp/test.csv"
 MODEL_KEY        = "models/current/model.json"
 MODEL_FILE       = "/tmp/model.json"
+SCALER_KEY       = "processed/scaler.pkl"
 STATS_KEY        = "processed/reference_stats.json"
 STATS_FILE       = "/tmp/reference_stats.json"
 NARRATION_LAMBDA = "vigil-narration"
@@ -45,7 +48,12 @@ def load_artifacts():
     model = xgb.XGBRegressor()
     model.load_model(MODEL_FILE)
 
-    return incoming_df,ref_stats,model
+    buf = io.BytesIO()
+    s3.download_fileobj(BUCKET, SCALER_KEY, buf)
+    buf.seek(0)
+    scaler = pickle.load(buf)
+
+    return incoming_df,ref_stats,scaler,model
 
 
 def save_drift_report(report: dict) -> str:
@@ -75,9 +83,10 @@ def start_retraining(report: dict) -> None:
 
 def lambda_handler(event, context):
     try:
-        incoming_df, ref_stats, model = load_artifacts()
+        incoming_df, ref_stats,scaler, model = load_artifacts()
 
-        results = run_drift_checks(model, ref_stats, incoming_df)
+        incoming_engineered, _, _ = build_features(incoming_df, scaler=scaler, fit=False)        
+        results = run_drift_checks(model, ref_stats, incoming_engineered)
 
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         results["timestamp"] = timestamp
@@ -85,7 +94,7 @@ def lambda_handler(event, context):
 
         if results["drift_detected"]:
             invoke_narration(results)
-            start_retraining(results)
+            #start_retraining(results)
 
         return {
             "statusCode": 200,

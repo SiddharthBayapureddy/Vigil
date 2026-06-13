@@ -93,7 +93,6 @@ def download_stats(s3 : boto3.client):
 
     incoming_val = pd.read_csv(INCOMING_FILE)
     
-    reference_stats = {}
     with open(STATS_FILE , "r") as file:
         reference_stats = json.load(file)
 
@@ -115,17 +114,18 @@ def run_drift_checks(model : xgb.XGBRegressor , reference_stats : dict , incomin
         ref_std       = reference_stats["features"][feat]["std"]
         incoming_vals = incoming_val[feat].values
 
-        
- 
         psi_scores[feat]      = compute_psi(ref_counts, incoming_vals, bins)
         ks_stat, ks_p         = compute_ks(ref_mean, ref_std, incoming_vals)
         ks_scores[feat]       = {"stat": ks_stat, "p_value": ks_p}
- 
-    incoming_X = incoming_val.drop(columns=DROP_COLS, errors="ignore")
-    incoming_y = incoming_val[TARGET]
-    mae_ratio  = compute_mae_ratio(model, incoming_X, incoming_y,
-                                   reference_stats["baseline_mae"])
- 
+
+    # MAE ratio only if labels available
+    mae_ratio = None
+    if TARGET in incoming_val.columns:
+        incoming_X = incoming_val.drop(columns=DROP_COLS, errors="ignore")
+        incoming_y = incoming_val[TARGET]
+        mae_ratio  = compute_mae_ratio(model, incoming_X, incoming_y,
+                                       reference_stats["baseline_mae"])
+
     triggered_by = []
     for feat, psi in psi_scores.items():
         if psi > PSI_THRESHOLD:
@@ -133,12 +133,12 @@ def run_drift_checks(model : xgb.XGBRegressor , reference_stats : dict , incomin
     for feat, ks in ks_scores.items():
         if ks["stat"] > KS_THRESHOLD:
             triggered_by.append(f"KS:{feat}")
-    if mae_ratio > MAE_THRESHOLD:
+    if mae_ratio is not None and mae_ratio > MAE_THRESHOLD:
         triggered_by.append("MAE")
  
     return {
         "drift_detected": len(triggered_by) > 0,
-        "mae_ratio":      round(mae_ratio, 4),
+        "mae_ratio":      round(mae_ratio, 4) if mae_ratio is not None else "N/A",
         "psi_scores":     {k: round(v, 4) for k, v in psi_scores.items()},
         "ks_scores":      {k: {"stat":    round(v["stat"],    4),
                                "p_value": round(v["p_value"], 4)}
@@ -177,8 +177,6 @@ if __name__ == "__main__":
     for feat, ks in results["ks_scores"].items():
         flag = " ⚠" if ks["stat"] > KS_THRESHOLD else ""
         print(f"  {feat:<15} stat={ks['stat']:.4f}  p={ks['p_value']:.4f}{flag}")
-
-
 
     # Cleaning up
     for file in [MODEL_FILE,STATS_FILE, INCOMING_FILE]:

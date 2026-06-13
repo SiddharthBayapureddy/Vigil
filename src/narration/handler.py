@@ -29,7 +29,8 @@ Write a concise incident report for an on-call engineer covering:
 3. What automated actions have been triggered
 4. Recommended follow-up action
 
-Keep it under 150 words. Be direct. No fluff."""
+Keep it under 150 words. Be direct. No fluff.
+Use plain text only — no markdown, no asterisks, no bullet symbols. Use numbered lists and plain punctuation only."""
 
 
 def narrate(prompt: str):
