@@ -31,7 +31,7 @@ FUNCTIONS = [
         "name":    "vigil-monitoring",
         "handler": "monitoring.handler.lambda_handler",
         "env": {
-            "STEPFUNCTIONS_ARN": "PLACEHOLDER",  # fill after setup_stepfunctions.py
+            "STEPFUNCTIONS_ARN": os.environ.get("STEPFUNCTIONS_ARN" , ""),
         },
     },
     {

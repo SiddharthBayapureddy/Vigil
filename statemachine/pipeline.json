@@ -10,7 +10,8 @@
         "TrainingJobName.$": "States.Format('vigil-retrain-{}', $$.Execution.Name)",
         "AlgorithmSpecification": {
           "TrainingImage": "143629080836.dkr.ecr.us-east-1.amazonaws.com/vigil-lambda:latest",
-          "TrainingInputMode": "File"
+          "TrainingInputMode": "File",
+          "ContainerEntrypoint": ["python", "/var/task/retrain.py"]
         },
         "RoleArn": "arn:aws:iam::143629080836:role/vigil-sagemaker-role",
         "InputDataConfig": [
@@ -96,7 +97,7 @@
         "Payload.$": "$.validation"
       },
       "ResultPath": "$.promotion",
-      "Next": "End",
+      "Next": "PipelineEnd",
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
@@ -112,9 +113,9 @@
       "Parameters": {
         "TopicArn": "arn:aws:sns:us-east-1:143629080836:vigil-alerts",
         "Subject": "Vigil - Challenger Rejected",
-        "Message.$": "States.Format('Challenger model rejected. Champion MAE: {} | Challenger MAE: {}', $.validation.champion_mae, $.validation.challenger_mae)"
+        "Message.$": "States.Format('Challenger model rejected.\nChampion MAE: {} | Challenger MAE: {}\nChampion NASA: {} | Challenger NASA: {}', $.validation.champion_mae, $.validation.challenger_mae, $.validation.champion_nasa, $.validation.challenger_nasa)"
       },
-      "Next": "End"
+      "Next": "PipelineEnd"
     },
 
     "NotifyFailure": {
@@ -123,13 +124,14 @@
       "Parameters": {
         "TopicArn": "arn:aws:sns:us-east-1:143629080836:vigil-alerts",
         "Subject": "Vigil - Retraining Failed",
-        "Message.$": "States.Format('Retraining pipeline failed. Error: {}', $.error)"
+        "Message.$": "States.Format('Retraining pipeline failed.\nError: {}', $.error)"
       },
-      "Next": "End"
+      "Next": "PipelineEnd"
     },
 
-    "End": {
+    "PipelineEnd": {
       "Type": "Succeed"
     }
+
   }
 }

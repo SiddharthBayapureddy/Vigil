@@ -26,7 +26,7 @@ SCALER_KEY       = "processed/scaler.pkl"
 STATS_KEY        = "processed/reference_stats.json"
 STATS_FILE       = "/tmp/reference_stats.json"
 NARRATION_LAMBDA = "vigil-narration"
-STEPFUNCTIONS_ARN = "STEP_FUNCTIONS_ARN_PLACEHOLDER"
+STEPFUNCTIONS_ARN = os.environ.get("STEPFUNCTIONS_ARN", "STEP_FUNCTIONS_ARN_PLACEHOLDER")
 
 s3 = boto3.client("s3")
 lam = boto3.client("lambda" , region_name="us-east-1")

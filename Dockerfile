@@ -11,6 +11,9 @@ COPY src/narration/handler.py    ${LAMBDA_TASK_ROOT}/narration/handler.py
 COPY src/validation/handler.py   ${LAMBDA_TASK_ROOT}/validation/handler.py
 COPY src/promotion/handler.py    ${LAMBDA_TASK_ROOT}/promotion/handler.py
 
+# Copy Sagemaker training scripts
+COPY ml/retrain.py    ${LAMBDA_TASK_ROOT}/retrain.py
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install -r requirements.txt --no-cache-dir
