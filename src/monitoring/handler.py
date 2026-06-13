@@ -94,7 +94,7 @@ def lambda_handler(event, context):
 
         if results["drift_detected"]:
             invoke_narration(results)
-            #start_retraining(results)
+            start_retraining(results)
 
         return {
             "statusCode": 200,

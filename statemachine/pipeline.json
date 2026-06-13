@@ -1,0 +1,135 @@
+{
+  "Comment": "Vigil autonomous retraining pipeline — drift detected → retrain → validate → promote/reject",
+  "StartAt": "LaunchSageMakerJob",
+  "States": {
+
+    "LaunchSageMakerJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync",
+      "Parameters": {
+        "TrainingJobName.$": "States.Format('vigil-retrain-{}', $$.Execution.Name)",
+        "AlgorithmSpecification": {
+          "TrainingImage": "143629080836.dkr.ecr.us-east-1.amazonaws.com/vigil-lambda:latest",
+          "TrainingInputMode": "File"
+        },
+        "RoleArn": "arn:aws:iam::143629080836:role/vigil-sagemaker-role",
+        "InputDataConfig": [
+          {
+            "ChannelName": "train",
+            "DataSource": {
+              "S3DataSource": {
+                "S3DataType": "S3Prefix",
+                "S3Uri": "s3://vigil-bucket/raw-data/train/",
+                "S3DataDistributionType": "FullyReplicated"
+              }
+            }
+          }
+        ],
+        "OutputDataConfig": {
+          "S3OutputPath": "s3://vigil-bucket/models/challenger/"
+        },
+        "ResourceConfig": {
+          "InstanceType": "ml.m5.large",
+          "InstanceCount": 1,
+          "VolumeSizeInGB": 5
+        },
+        "StoppingCondition": {
+          "MaxRuntimeInSeconds": 3600
+        },
+        "Environment": {
+          "SM_CHANNEL_TRAIN": "/opt/ml/input/data/train",
+          "SM_MODEL_DIR": "/opt/ml/model"
+        }
+      },
+      "Next": "ValidateChallenger",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "ValidateChallenger": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "vigil-validation",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "promote.$": "$.Payload.promote",
+        "champion_mae.$": "$.Payload.champion_mae",
+        "challenger_mae.$": "$.Payload.challenger_mae",
+        "champion_nasa.$": "$.Payload.champion_nasa",
+        "challenger_nasa.$": "$.Payload.challenger_nasa"
+      },
+      "ResultPath": "$.validation",
+      "Next": "ShouldPromote",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "ShouldPromote": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.promote",
+          "BooleanEquals": true,
+          "Next": "PromoteChallenger"
+        }
+      ],
+      "Default": "NotifyRejection"
+    },
+
+    "PromoteChallenger": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "vigil-promotion",
+        "Payload.$": "$.validation"
+      },
+      "ResultPath": "$.promotion",
+      "Next": "End",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "NotifyRejection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:143629080836:vigil-alerts",
+        "Subject": "Vigil - Challenger Rejected",
+        "Message.$": "States.Format('Challenger model rejected. Champion MAE: {} | Challenger MAE: {}', $.validation.champion_mae, $.validation.challenger_mae)"
+      },
+      "Next": "End"
+    },
+
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:143629080836:vigil-alerts",
+        "Subject": "Vigil - Retraining Failed",
+        "Message.$": "States.Format('Retraining pipeline failed. Error: {}', $.error)"
+      },
+      "Next": "End"
+    },
+
+    "End": {
+      "Type": "Succeed"
+    }
+  }
+}
