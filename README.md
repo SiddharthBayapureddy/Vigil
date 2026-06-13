@@ -60,9 +60,9 @@ No manual intervention required once deployed. The entire loop — detect, narra
 
 | Metric | Baseline (raw features) | Final (engineered features) |
 |--------|------------------------|------------------------------|
-| MAE    | 36.53 cycles           | 27.22 cycles                 |
-| RMSE   | 51.08                  | 38.92                        |
-| R²     | 0.565                  | 0.748                        |
+| MAE    | 36.53 cycles           | 9.277 cycles                 |
+| RMSE   | 51.08                  | 12.82                        |
+| R²     | 0.565                  | 0.9035                       |
 
 Feature engineering improvements over raw sensors:
 - Rolling mean, std, min, max over 5 and 10 cycle windows per engine
